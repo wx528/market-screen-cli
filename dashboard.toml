@@ -1,0 +1,62 @@
+# dashboard.toml — user-tunable settings.
+# Rename or copy to `dashboard.toml` (same folder as dashboard.py) and edit.
+# Anything missing here falls back to the in-code defaults; nothing breaks.
+#
+# ⚠️  Top-level arrays (tickers / notices / seed_log) MUST be at the very top
+#     OR the very bottom of this file — never interleaved with [tables]. TOML
+#     will silently drop them otherwise.
+
+# ── top-level arrays (kept above all [tables] per TOML spec) ────────────────
+
+# Tickers shown in the TICKER STREAM panel. Each row: [symbol, full_name].
+tickers = [
+  ["AAPL",  "APPLE INC"],
+  ["MSFT",  "MICROSOFT"],
+  ["NVDA",  "NVIDIA"],
+  ["TSLA",  "TESLA"],
+  ["AMZN",  "AMAZON"],
+  ["GOOGL", "ALPHABET"],
+  ["META",  "META PLATFORMS"],
+  ["BTC",   "BITCOIN"],
+  ["ETH",   "ETHEREUM"],
+  ["GOLD",  "GOLD SPOT"],
+  ["OIL",   "WTI CRUDE"],
+  ["DXY",   "DOLLAR INDEX"],
+]
+
+# Marquee news ticker. Each row: [category, message, color].
+# Color: red / yellow / cyan / magenta / green / white / blue.
+notices = [
+  ["BREAKING", "Fed signals rate cut in Q4 — futures rally across the curve", "red"],
+  ["ALERT",    "TSLA implied vol spikes to 92 (3-sigma breach on options chain)", "yellow"],
+  ["MARKET",   "Brent crude +2.4% on supply concerns; OPEC+ holds output",       "cyan"],
+  # ...add your own...
+]
+
+# Rolling event-log messages.
+seed_log = [
+  "order routed: AAPL BUY 100 @ 192.45",
+  "ws heartbeat OK (latency 12ms)",
+  "feed reconnected: NYSE",
+  # ...
+]
+
+# ── tunables (all optional, fall back to in-code defaults) ──────────────────
+
+[terminal]
+default_width  = 140   # width used by --demo / --anim when the console can't be probed
+default_height = 42    # ditto for height
+min_width      = 100   # hard floor: below this the layout starts to look squashed
+
+[refresh]
+fps              = 15  # Live refresh rate, 4–30 reasonable. CLI override: --fps N
+marquee_step     = 1   # chars the BIG marquee advances per tick (slow)
+ticker_step      = 2   # chars the ticker tape advances per tick; bump 3-4 for faster
+anim_frame_sleep = 0.08  # seconds between frames in --anim mode
+
+[layout]
+header_size  = 7   # logo + clock + BIG marquee (2 rows) + ticker tape = 5 rows + borders
+kpi_size     = 7   # height of the 4 KPI cards row
+mid_size     = 12  # height of the chart + system/log row
+bottom_size  = 11  # height of the ticker + heatmap row
+footer_size  = 3   # height of the status footer
