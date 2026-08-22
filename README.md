@@ -43,15 +43,30 @@ data is faked.
 ## Run
 
 ```bash
-uv run dashboard.py             # full-screen, real-time (Ctrl-C to exit)
-uv run dashboard.py --demo      # one-shot render to stdout, then exit
-uv run dashboard.py --anim 8    # animate 8 frames in-place
-uv run dashboard.py --fps 20    # override refresh rate for this launch
-uv run dashboard.py --init-config   # write a starter dashboard.toml
+uv run dashboard.py                          # full-screen, real-time
+uv run dashboard.py --demo                   # one-shot render, then exit
+uv run dashboard.py --anim 8                 # animate 8 frames in-place
+uv run dashboard.py --fps 20                 # override refresh rate
+uv run dashboard.py --init-config            # write starter dashboard.toml
+uv run dashboard.py --demo --demo-detail=kpi1   # screenshot a detail view
 ```
 
 Requires Python ≥ 3.11 (uses stdlib `tomllib`). Rich is the only runtime
 dep (pulled in via `uv`).
+
+## Keyboard
+
+| Key | Action |
+|---|---|
+| `1` `2` `3` `4` | Expand KPI 1..4 detail (full-screen sparkline) |
+| `t` | Expand ticker tape (full-width live prices) |
+| `h` | Show keyboard shortcuts overlay |
+| `ESC` | Back to dashboard |
+| `q` / `Ctrl-C` | Quit |
+
+Mouse support is not wired in v0.0.2 — keyboard is the primary
+interaction model. Add `Console(mouse=True)` and a `record=True`
+loop if you want click-to-expand (see Rich docs for `MouseEvent`).
 
 ## Configuration
 

@@ -4,6 +4,23 @@ All notable changes to this project will be documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.0.2] — 2026-08-22
+
+### Added
+- **Interactive detail overlay** — keyboard-driven drill-down.
+  - `1` / `2` / `3` / `4` — expand KPI 1..4 detail (full-screen
+    sparkline + last value / change)
+  - `t` — expand ticker tape detail (full-width live prices)
+  - `h` — keyboard shortcuts overlay
+  - `ESC` — back to dashboard
+  - `q` / Ctrl-C — quit
+  - `--demo-detail=kpi1|kpi2|kpi3|kpi4|ticker|help` for screenshotting
+- Footer now shows the hotkey hint row (`keys 1-4 kpi  t ticker  h
+  help  esc back  q quit`).
+- Cross-platform non-blocking keyboard polling (`msvcrt` on Windows,
+  `termios + select` on POSIX). Special-key handling for arrows /
+  ESC.
+
 ## [0.0.1] — 2026-08-21
 
 Initial release.
