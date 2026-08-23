@@ -4,6 +4,22 @@ All notable changes to this project will be documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.0.3] — 2026-08-23
+
+### Added
+- **Mouse support** — click any panel to drill down.
+  - Background thread reads SGR mouse events (`\x1b[<button;x;yM`)
+    from stdin, parses via `_InputTracker`.
+  - Windows console: `ctypes` flips `ENABLE_VIRTUAL_TERMINAL_INPUT`
+    + clears processed/echo mode so escape sequences reach Python.
+  - POSIX: SGR mode (1006) + basic tracking (1000) enabled at
+    startup, disabled on exit.
+  - Hit-test `_hit_test(x, y, term_w)` maps click coords to detail
+    mode (KPI 1..4 / ticker / off).
+  - Left-click anywhere on the dashboard → expand that panel.
+  - Left-click while in detail → return to dashboard.
+  - `--demo-mouse=x,y` synthesises a click for screenshotting.
+
 ## [0.0.2] — 2026-08-22
 
 ### Added

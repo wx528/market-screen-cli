@@ -10,7 +10,10 @@ Run:
 from __future__ import annotations
 
 import math
+import queue
 import random
+import re
+import threading
 import time
 from collections import deque
 from datetime import datetime
@@ -33,52 +36,122 @@ import os
 import sys
 from config import CONFIG as CFG
 
-# ── cross-platform non-blocking keyboard poll ─────────────────────────────────
-# Returns a single character (or special token for arrows/esc) or None.
-_KEY_FD_SAVED: object | None = None  # for restoring termios on Linux/Mac
+# ── cross-platform non-blocking keyboard + mouse poll ─────────────────────────
+# Returns ("key", "1") for keys, ("mouse", (button, x, y)) for clicks,
+# or None. A background thread drains stdin; mouse tracking is enabled
+# via SGR ANSI mode on POSIX and VT input on Windows.
+
+_MOUSE_RE = re.compile(r"\x1b\[<(\d+);(\d+);(\d+)([Mm])")
 
 
-def _poll_key() -> str | None:
-    """Non-blocking single-key read. Returns None if no key waiting."""
-    if os.name == "nt":
-        try:
-            import msvcrt
-            if not msvcrt.kbhit():
-                return None
-            ch = msvcrt.getch()
-            if ch in (b"\x00", b"\xe0"):  # arrow / function key prefix
-                ch2 = msvcrt.getch()
-                return {b"H": "UP", b"P": "DOWN", b"K": "LEFT", b"M": "RIGHT"}.get(
-                    ch2, f"\\x{ord(ch2):02x}")
-            if ch == b"\x1b":
-                return "ESC"
-            return ch.decode("utf-8", errors="ignore")
-        except Exception:
-            return None
-    # POSIX
+def _enable_vt_input_windows() -> None:
+    """On Windows, flip ENABLE_VIRTUAL_TERMINAL_INPUT so stdin delivers
+    ANSI escape sequences (including SGR mouse events)."""
+    if os.name != "nt":
+        return
     try:
-        import select, tty, termios
-        fd = sys.stdin.fileno()
-        if not select.select([sys.stdin], [], [], 0)[0]:
-            return None
-        old = termios.tcgetattr(fd)
-        try:
-            tty.setraw(fd)
-            ch = os.read(fd, 1)
-        finally:
-            termios.tcsetattr(fd, termios.TCSADRAIN, old)
-        if ch == b"\x1b":
-            # try to read one more byte for ESC sequences (arrow keys)
-            if select.select([sys.stdin], [], [], 0)[0]:
-                nxt = os.read(fd, 1)
-                if nxt == b"[" and select.select([sys.stdin], [], [], 0)[0]:
-                    code = os.read(fd, 1)
-                    return {"A": "UP", "B": "DOWN", "C": "RIGHT", "D": "LEFT"}.get(
-                        code.decode("latin-1"), "ESC")
-            return "ESC"
-        return ch.decode("utf-8", errors="ignore")
+        import ctypes
+        kernel32 = ctypes.windll.kernel32
+        h = kernel32.GetStdHandle(-10)  # STDIN_HANDLE
+        mode = ctypes.c_uint32()
+        kernel32.GetConsoleMode(h, ctypes.byref(mode))
+        mode.value |= 0x0200  # ENABLE_VIRTUAL_TERMINAL_INPUT
+        mode.value &= ~0x0001  # ENABLE_PROCESSED_INPUT off (raw)
+        mode.value &= ~0x0004  # ENABLE_ECHO_INPUT off
+        kernel32.SetConsoleMode(h, mode)
     except Exception:
-        return None
+        pass
+
+
+class _InputTracker:
+    """Background thread reading stdin, producing typed events."""
+
+    def __init__(self) -> None:
+        self.q: queue.Queue = queue.Queue()
+        self._buf = ""
+        self._stop = False
+        _enable_vt_input_windows()
+        # ask terminal to emit mouse events
+        try:
+            sys.stdout.write("\x1b[?1000h\x1b[?1006h")
+            sys.stdout.flush()
+        except Exception:
+            pass
+        threading.Thread(target=self._reader, daemon=True).start()
+
+    def _reader(self) -> None:
+        import time
+        while not self._stop:
+            try:
+                if os.name == "nt":
+                    import msvcrt
+                    if not msvcrt.kbhit():
+                        time.sleep(0.015)
+                        continue
+                    ch = msvcrt.getch()
+                else:
+                    import select
+                    r, _, _ = select.select([sys.stdin], [], [], 0.05)
+                    if not r:
+                        continue
+                    ch = os.read(0, 1)
+                self._feed(ch)
+            except Exception:
+                time.sleep(0.02)
+                continue
+
+    def _feed(self, ch) -> None:
+        """Push a single char/byte into the parser."""
+        if isinstance(ch, bytes):
+            try:
+                c = ch.decode("utf-8")
+            except UnicodeDecodeError:
+                return  # mid-multibyte; ignore until complete
+        else:
+            c = ch
+        if not c:
+            return
+        if c == "\x1b":
+            self._buf = "\x1b"
+            return
+        self._buf += c
+        # Mouse SGR:  ESC [ < button ; x ; y M|m
+        if self._buf.startswith("\x1b[<"):
+            m = _MOUSE_RE.match(self._buf)
+            if m:
+                button = int(m.group(1))
+                x = int(m.group(2))
+                y = int(m.group(3))
+                self.q.put(("mouse", (button, x, y)))
+                self._buf = ""
+            return  # wait for more bytes if no match yet
+        # Other ESC sequences (arrows etc) — flush after a short cap
+        if self._buf.startswith("\x1b"):
+            if len(self._buf) >= 3:
+                if self._buf == "\x1b[":
+                    return  # incomplete; wait
+                seq = self._buf
+                self._buf = ""
+                self.q.put(("key", seq))
+            return
+        # Plain byte — flush immediately
+        if self._buf:
+            self.q.put(("key", self._buf))
+            self._buf = ""
+
+    def poll(self):
+        try:
+            return self.q.get_nowait()
+        except queue.Empty:
+            return None
+
+    def shutdown(self) -> None:
+        self._stop = True
+        try:
+            sys.stdout.write("\x1b[?1000l\x1b[?1006l")
+            sys.stdout.flush()
+        except Exception:
+            pass
 
 # ── self-rolled sparkline (rich.sparkline was removed in 15.x)
 SPARK_BLOCKS = "▁▂▃▄▅▆▇█"
@@ -608,7 +681,9 @@ def footer(state: MarketState) -> Panel:
     hotkeys.append("esc", style="bold yellow")
     hotkeys.append(" back  ", style=DIM)
     hotkeys.append("q", style="bold red")
-    hotkeys.append(" quit", style=DIM)
+    hotkeys.append(" quit  ", style=DIM)
+    hotkeys.append("·", style="dim white")
+    hotkeys.append(" click any panel", style="italic dim white")
     bar.add_row(
         Text("STATUS ", style="bold green") + Text("● NOMINAL", style="green"),
         Text(f"UPTIME {state.uptime}", style="white"),
@@ -683,6 +758,34 @@ def heatmap_panel(state: MarketState) -> Panel:
 # ─────────────────────────────────────────────────────────────────────────────
 #  render
 # ─────────────────────────────────────────────────────────────────────────────
+
+def _hit_test(x: int, y: int, term_w: int) -> str | None:
+    """Map a click coordinate to a detail mode.
+
+    Layout rows (y is 1-based):
+        1..7   header (marquee + tape)   — no action
+        8..14  KPI strip (4 columns)
+        15..26 mid row (chart 60% | right 40%)
+        27..37 bottom row (ticker 75% | heatmap 25%)
+        38..40 footer                   — no action
+    """
+    if y <= 7 or y >= 38:
+        return None
+    if 8 <= y <= 14:
+        col = min(4, max(1, ((x - 1) * 4) // term_w + 1))
+        return f"kpi{col}"
+    if 15 <= y <= 26:
+        if x <= term_w * 0.6:
+            return "kpi1"  # chart → MARKETS
+        if y <= 20:
+            return "kpi2"  # gauges → VOLATILITY
+        return "kpi4"      # log → SENTIMENT
+    if 27 <= y <= 37:
+        if x <= term_w * 0.75:
+            return "ticker"
+        return "kpi3"      # heatmap → VOLUME
+    return None
+
 
 def _detail_panel(state: MarketState, width: int) -> Panel:
     """Full-screen overlay shown when a detail mode is active."""
@@ -824,6 +927,14 @@ def main() -> None:
         for arg in sys.argv:
             if arg.startswith("--demo-detail="):
                 state.detail = arg.split("=", 1)[1]
+        # --demo-mouse=x,y: synthesise a click for screenshotting
+        for arg in sys.argv:
+            if arg.startswith("--demo-mouse="):
+                _, coords = arg.split("=", 1)
+                sx, sy = (int(v) for v in coords.split(","))
+                target = _hit_test(sx, sy, term_w)
+                if target:
+                    state.detail = target
         Console(force_terminal=True, width=term_w, height=term_h).print(
             render(state, term_w))
         return
@@ -852,29 +963,57 @@ def main() -> None:
             pass
     sleep_s = 1.0 / fps
 
-    with Live(render(state, term_w), console=console, screen=True,
-              refresh_per_second=fps, transient=False) as live:
-        try:
-            while True:
-                # ── non-blocking keyboard poll ────────────────────────────
-                k = _poll_key()
-                if k:
-                    if k == "q":
-                        break
-                    if k == "ESC":
-                        state.detail = None
-                    elif k in ("1", "2", "3", "4"):
-                        state.detail = f"kpi{k}"
-                    elif k == "t":
-                        state.detail = "ticker"
-                    elif k == "h":
-                        state.detail = "help"
-                state.tick()
-                term_w = max(TERM_MIN_W, console.size.width or term_w)
-                live.update(render(state, term_w))
-                time.sleep(sleep_s)
-        except KeyboardInterrupt:
-            pass
+    # background thread captures keyboard + mouse; main loop polls queue
+    tracker = _InputTracker()
+
+    # --demo-mouse=x,y: synthesize a click on launch (for screenshots)
+    for arg in sys.argv:
+        if arg.startswith("--demo-mouse="):
+            _, coords = arg.split("=", 1)
+            sx, sy = (int(v) for v in coords.split(","))
+            target = _hit_test(sx, sy, term_w)
+            if target:
+                state.detail = target
+
+    try:
+        with Live(render(state, term_w), console=console, screen=True,
+                  refresh_per_second=fps, transient=False) as live:
+            try:
+                while True:
+                    evt = tracker.poll()
+                    if evt:
+                        kind, payload = evt
+                        if kind == "key":
+                            k = payload
+                            if k == "q" or k.startswith("\x03"):  # q or Ctrl-C
+                                break
+                            if k == "ESC" or k == "\x1b":
+                                state.detail = None
+                            elif k in ("1", "2", "3", "4"):
+                                state.detail = f"kpi{k}"
+                            elif k == "t":
+                                state.detail = "ticker"
+                            elif k == "h":
+                                state.detail = "help"
+                        elif kind == "mouse":
+                            button, mx, my = payload
+                            # SGR encodes x, y as 1-based; we use as-is
+                            if button == 0 and not state.detail:
+                                # left click in dashboard → drill down
+                                target = _hit_test(mx, my, term_w)
+                                if target:
+                                    state.detail = target
+                            elif button == 0 and state.detail:
+                                # left click while in detail → back out
+                                state.detail = None
+                    state.tick()
+                    term_w = max(TERM_MIN_W, console.size.width or term_w)
+                    live.update(render(state, term_w))
+                    time.sleep(sleep_s)
+            except KeyboardInterrupt:
+                pass
+    finally:
+        tracker.shutdown()
 
 
 if __name__ == "__main__":

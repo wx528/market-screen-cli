@@ -64,9 +64,26 @@ dep (pulled in via `uv`).
 | `ESC` | Back to dashboard |
 | `q` / `Ctrl-C` | Quit |
 
-Mouse support is not wired in v0.0.2 — keyboard is the primary
-interaction model. Add `Console(mouse=True)` and a `record=True`
-loop if you want click-to-expand (see Rich docs for `MouseEvent`).
+## Mouse
+
+Click anywhere on the dashboard to drill into that panel:
+
+| Click on | Expands |
+|---|---|
+| KPI 1 / 2 / 3 / 4 | MARKETS / VOLATILITY / VOLUME / SENTIMENT detail |
+| INTRADAY chart    | MARKETS detail (kpi1) |
+| SYSTEM gauges     | VOLATILITY detail (kpi2) |
+| EVENT LOG         | SENTIMENT detail (kpi4) |
+| TICKER STREAM     | ticker tape detail |
+| SECTOR HEATMAP    | VOLUME detail (kpi3) |
+| Click again in detail | return to dashboard |
+
+Mouse tracking uses SGR ANSI mode (`\x1b[?1000h\x1b[?1006h`); on
+Windows, `ENABLE_VIRTUAL_TERMINAL_INPUT` is flipped via `ctypes` so
+escape sequences reach Python's stdin. Tested on Windows Terminal;
+iTerm2, gnome-terminal, xterm also work. Old `cmd.exe` (legacy
+Windows Console Host) does **not** support mouse — keyboard is
+your fallback there.
 
 ## Configuration
 
